@@ -199,7 +199,7 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
         setupAntialiasing(g)
 
         fun textY(text: String): Int {
-            var textY = UIUtil.getStringY(text.toString(), Rectangle(width, height), g as Graphics2D)
+            var textY = UIUtil.getStringY(text, Rectangle(width, height), g as Graphics2D)
             if (SystemInfo.isJetBrainsJvm && NewUI.isEnabled()) {
                 textY += g.fontMetrics.leading
             }

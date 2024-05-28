@@ -7,8 +7,6 @@ import com.openmeteo.api.OpenMeteo
 import com.openmeteo.api.common.Response
 import com.openmeteo.api.common.time.Time
 import com.openmeteo.api.common.time.Timezone
-import com.openmeteo.api.common.units.TemperatureUnit
-import com.openmeteo.api.common.units.WindSpeedUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -21,10 +19,10 @@ class WeatherService(coroutineScope: CoroutineScope) {
     init {
         coroutineScope.launch {
             while (true) {
-                if (activeWidget != null && System.currentTimeMillis() - lastUpdate > 5 * 60_000) {
-                    update()
+                if (activeWidget != null) {
+                    getRainData()
                 }
-                delay(10_000)
+                delay(20_000)
             }
         }
     }
@@ -32,9 +30,12 @@ class WeatherService(coroutineScope: CoroutineScope) {
     private val settings = service<WeatherWidgetSettingsState>()
     private var cachedRainData = loadWeather()
 
-    fun getRainData(): List<Pair<Time, HourData>> {
-        if (cachedRainData.first().first.time + 60 * 60_000 < System.currentTimeMillis()) {
-            update()
+    fun getRainData(): WeatherData {
+        when (cachedRainData) {
+            is WeatherData.Error -> update()
+            is WeatherData.Present -> if (lastUpdate + 5 * 60_000 < System.currentTimeMillis()) {
+                update()
+            }
         }
         return cachedRainData
     }
@@ -50,10 +51,27 @@ class WeatherService(coroutineScope: CoroutineScope) {
     var activeWidget: WidgetComponent? = null
 
     private var lastUpdate: Long = 0L
-    private fun loadWeather(): List<Pair<Time, HourData>> {
-        return WeatherClient(settings).getRainData()
-            .also { lastUpdate = System.currentTimeMillis() }
+    private fun loadWeather(): WeatherData {
+        return try {
+            WeatherData.Present(WeatherClient(settings).getRainData())
+                .also {
+                    lastUpdate = System.currentTimeMillis()
+                }
+        } catch (e: Throwable) {
+            val error = buildString {
+                append(e::class.java.name)
+                if (e.message != null) {
+                    append(":\n${e.message}")
+                }
+            }
+            WeatherData.Error(error)
+        }
     }
+}
+
+sealed interface WeatherData {
+    class Present(val data: List<Pair<Time, HourData>>) : WeatherData
+    class Error(val message: String) : WeatherData
 }
 
 data class HourData(val rain: Double, val temperature: Double, val wind: Double, val windDirection: Double)

@@ -2,28 +2,22 @@
 
 package widget
 
-import com.intellij.codeInsight.hint.HintUtil
 import com.intellij.icons.AllIcons
 import com.intellij.ide.ui.UISettings.Companion.setupAntialiasing
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.service
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.MessageType
 import com.intellij.openapi.ui.popup.Balloon
+import com.intellij.openapi.ui.popup.IconButton
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.SystemInfo
-import com.intellij.openapi.util.text.HtmlBuilder
-import com.intellij.openapi.util.text.HtmlChunk
 import com.intellij.openapi.wm.CustomStatusBarWidget
 import com.intellij.openapi.wm.StatusBarWidget
 import com.intellij.openapi.wm.StatusBarWidgetFactory
 import com.intellij.openapi.wm.impl.status.TextPanel
-import com.intellij.ui.BalloonImpl
-import com.intellij.ui.ExperimentalUI
-import com.intellij.ui.GotItComponentBuilder
-import com.intellij.ui.GotItComponentBuilder.Companion.getArrowShift
-import com.intellij.ui.GotItTooltip
+import com.intellij.ui.InplaceButton
+import com.intellij.ui.NewUI
 import com.intellij.ui.awt.RelativePoint
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
@@ -33,12 +27,11 @@ import com.openmeteo.api.common.time.Time
 import com.openmeteo.api.common.units.TemperatureUnit
 import com.openmeteo.api.common.units.WindSpeedUnit
 import services.HourData
+import services.WeatherData
 import services.WeatherService
 import settings.WeatherWidgetConfigurable
 import settings.WeatherWidgetSettingsState
 import java.awt.*
-import java.awt.event.ActionEvent
-import java.awt.event.ActionListener
 import java.awt.event.MouseEvent
 import java.awt.event.MouseListener
 import java.text.SimpleDateFormat
@@ -46,7 +39,6 @@ import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
 import kotlin.math.roundToInt
-
 
 class WeatherWidgetFactory : StatusBarWidgetFactory {
     override fun getId(): String {
@@ -94,41 +86,47 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
         WindSpeedUnit.Knots -> "kn"
     }
 
-    private fun generateWeatherTable(data: List<Pair<Time, HourData>>): String {
-        val isRainExpected = data.any { it.second.rain > 0.0 }
-        return buildString {
-            append("<html><table align=\"center\" border=\"5\">")
-            append("<tr><th>Time</th><th>Temp(${temperatureUnitText(model.temperatureUnit)})</th>")
-            if (isRainExpected) append("<th>Rain(mm)</th>")
-            append("<th>Wind(${windSpeedUnitText(model.windSpeedUnit)})</th><th></th></tr>")
-            data.forEach { (time, hourData) ->
-                append("<tr>")
-                append("<td>")
-                append(formatter.format(time))
-                append("h")
-                append("</td>")
-                append("<td>")
-                if (hourData.temperature > 0.0) append("+")
-                append(hourData.temperature.roundToInt())
-                append("</td>")
-                if (isRainExpected) {
+    private fun generateWeatherTable(data: WeatherData): String = when (data) {
+        is WeatherData.Error -> "<html>${data.message.replace("\n", "<br>")}</html>"
+        is WeatherData.Present -> {
+            val weatherData = data.data
+            val isRainExpected = weatherData.any { it.second.rain > 0.0 }
+            buildString {
+                append("<html><table align=\"center\" cellpadding=\"5\">")
+                append("<tr><th>Time</th><th>Temp</th>")
+                if (isRainExpected) append("<th>Rain</th>")
+                append("<th>Wind</th><th></th></tr>")
+                weatherData.forEach { (time, hourData) ->
+                    append("<tr>")
                     append("<td>")
-                    append(hourData.rain)
+                    append(formatter.format(time))
+                    append("h")
                     append("</td>")
+                    append("<td>")
+                    if (hourData.temperature > 0.0) append("+")
+                    append(hourData.temperature.roundToInt())
+                    append(" " + temperatureUnitText(model.temperatureUnit))
+                    append("</td>")
+                    if (isRainExpected) {
+                        append("<td>")
+                        append(hourData.rain)
+                        append(" mm</td>")
+                    }
+                    append("<td>")
+                    append(hourData.wind.roundToInt())
+                    append(" " + windSpeedUnitText(model.windSpeedUnit))
+                    append("</td>")
+                    append("<td>")
+                    append(getWindDirectionText(hourData.windDirection))
+                    append("</td>")
+                    append("</tr>")
                 }
-                append("<td>")
-                append(hourData.wind.roundToInt())
-                append("</td>")
-                append("<td>")
-                append(getWindDirectionText(hourData.windDirection))
-                append("</td>")
-                append("</tr>")
+                append("</table>")
+                if (isRainExpected.not()) {
+                    append("<br><b>No rain expected</b>")
+                }
+                append("</html>")
             }
-            append("</table>")
-            if (isRainExpected.not()) {
-                append("<br><b>No rain expected</b>")
-            }
-            append("</html>")
         }
     }
 
@@ -137,24 +135,44 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
         addMouseListener(object : MouseListener {
             override fun mouseClicked(e: MouseEvent) {
                 if (e.button == 1) {
+                    val bg = when (model.rainData) {
+                        is WeatherData.Error -> JBUI.CurrentTheme.NotificationError.backgroundColor()
+                        is WeatherData.Present -> JBUI.CurrentTheme.GotItTooltip.background(true)
+                    }
+                    val fg = when (model.rainData) {
+                        is WeatherData.Error -> JBUI.CurrentTheme.NotificationError.foregroundColor()
+                        is WeatherData.Present -> JBUI.CurrentTheme.GotItTooltip.foreground(true)
+                    }
                     val panel = BorderLayoutPanel()
-//                    panel.addToCenter()
-                    val htmlTable =
-                        "<html><table><tr><th>Header 1</th><th>Header 2</th></tr><tr><td>Cell 1</td><td>Cell 2</td></tr></table></html>"
-                    val label = JLabel(generateWeatherTable(model.rainData))
-                    panel.addToCenter(label)
+                    val title = JBLabel("<html><h2>${model.city}</h2></html>", UIUtil.ComponentStyle.LARGE)
+                    val settingsButton = InplaceButton(
+                        IconButton(
+                            "Settings",
+                            AllIcons.General.Gear,
+                            AllIcons.General.GearPlain
+                        )
+                    ) {
+                        ShowSettingsUtil.getInstance()
+                            .showSettingsDialog(null, WeatherWidgetConfigurable::class.java)
+                    }
+                    panel.background = bg
+                    panel.foreground = fg
+                    panel.addToTop(BorderLayoutPanel().apply {
+                        background = bg
+                        foreground = fg
+                        addToCenter(title)
+                        addToRight(settingsButton)
+                    })
+                    panel.addToCenter(JLabel(generateWeatherTable(model.rainData)))
                     JBPopupFactory.getInstance()
                         .createBalloonBuilder(panel)
-//                        .createHtmlTextBalloonBuilder(generateWeatherTable(model.rainData), MessageType.INFO, null)
-                        .setFadeoutTime(5000)
-                        .setTitle(model.city)
-                        .setDialogMode(true)
-                        .setClickHandler({
-                            ShowSettingsUtil.getInstance()
-                                .showSettingsDialog(null, WeatherWidgetConfigurable::class.java)
-                        }, true)
+                        .setFillColor(bg)
+                        .setBorderColor(fg)
+                        .setBorderInsets(Insets(2, 15, 10, 15))
+                        .setCornerRadius(JBUI.scale(8))
+                        .setFadeoutTime(10_000)
                         .createBalloon()
-                        .show(RelativePoint.getSouthWestOf(this@WidgetComponent), Balloon.Position.above)
+                        .show(RelativePoint.getCenterOf(this@WidgetComponent), Balloon.Position.above)
                 }
             }
 
@@ -179,40 +197,59 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
         g.font = TextPanel.getFont()
         super.paintComponents(g)
         setupAntialiasing(g)
-        val rainData = model.rainData
-        val isRainExpected = rainData.any { it.second.rain > 0.0 }
-        if (isRainExpected) {
-            val stepSize = width / rainData.size
-            for (i in rainData.indices) {
-                drawStep(g, i * stepSize, stepSize, rainData[i])
+
+        fun textY(text: String): Int {
+            var textY = UIUtil.getStringY(text.toString(), Rectangle(width, height), g as Graphics2D)
+            if (SystemInfo.isJetBrainsJvm && NewUI.isEnabled()) {
+                textY += g.fontMetrics.leading
             }
-            val nowX = calcNowX(rainData, width)
-            g.color = UIUtil.getErrorForeground()
-            g.drawLine(nowX, height / 2, nowX, height - 2)
+            return textY
         }
-        val widgetText = StringBuilder()
-        if (model.showWind) {
-            val direction = rainData.first().second.windDirection
-            val windSpeed = rainData.first().second.wind.roundToInt().toString()
-            widgetText.append(getWindDirectionText(direction) + windSpeed)
-        }
-        if (model.showTemperature) {
-            if (widgetText.isNotEmpty()) widgetText.append(" ")
-            val temperature =
-                rainData.first().second.temperature.roundToInt().let { if (it > 0) "+$it" else it.toString() }
-            widgetText.append(temperature)
-        }
-        if (widgetText.isNotEmpty()) {
-            var y = UIUtil.getStringY(widgetText.toString(), Rectangle(width, height), g as Graphics2D)
-            if (SystemInfo.isJetBrainsJvm && ExperimentalUI.isNewUI()) {
-                y += g.fontMetrics.leading
+
+        when (val data = model.rainData) {
+            is WeatherData.Error -> {
+                val errorText = "No data"
+                g.color = JBUI.CurrentTheme.StatusBar.Widget.FOREGROUND
+                g.drawString(errorText, width / 2 - g.fontMetrics.stringWidth(errorText) / 2, textY(errorText))
             }
-            g.color = if (model.hover) {
-                JBUI.CurrentTheme.StatusBar.Widget.HOVER_FOREGROUND
-            } else {
-                JBUI.CurrentTheme.StatusBar.Widget.FOREGROUND
+
+            is WeatherData.Present -> {
+                val rainData = data.data
+                val isRainExpected = rainData.any { it.second.rain > 0.0 }
+                if (isRainExpected) {
+                    val stepSize = width / rainData.size
+                    for (i in rainData.indices) {
+                        drawStep(g, i * stepSize, stepSize, rainData[i])
+                    }
+                    val nowX = calcNowX(rainData, width)
+                    g.color = UIUtil.getErrorForeground()
+                    g.drawLine(nowX, height / 2, nowX, height - 2)
+                }
+                val widgetText = StringBuilder()
+                if (model.showWind) {
+                    val direction = rainData.first().second.windDirection
+                    val windSpeed = rainData.first().second.wind.roundToInt().toString()
+                    widgetText.append(getWindDirectionText(direction) + windSpeed)
+                }
+                if (model.showTemperature) {
+                    if (widgetText.isNotEmpty()) widgetText.append(" ")
+                    val temperature =
+                        rainData.first().second.temperature.roundToInt().let { if (it > 0) "+$it" else it.toString() }
+                    widgetText.append(temperature)
+                }
+                if (widgetText.isNotEmpty()) {
+                    g.color = if (model.hover) {
+                        JBUI.CurrentTheme.StatusBar.Widget.HOVER_FOREGROUND
+                    } else {
+                        JBUI.CurrentTheme.StatusBar.Widget.FOREGROUND
+                    }
+                    g.drawString(
+                        widgetText.toString(),
+                        width / 2 - g.fontMetrics.stringWidth(widgetText.toString()) / 2,
+                        textY(widgetText.toString())
+                    )
+                }
             }
-            g.drawString(widgetText.toString(), width / 2 - g.fontMetrics.stringWidth(widgetText.toString()) / 2, y)
         }
         g.dispose()
     }

@@ -2,14 +2,19 @@
 
 package widget
 
+import com.intellij.codeInsight.hint.HintUtil
 import com.intellij.icons.AllIcons
 import com.intellij.ide.ui.UISettings.Companion.setupAntialiasing
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.service
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.MessageType
 import com.intellij.openapi.ui.popup.Balloon
+import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.SystemInfo
+import com.intellij.openapi.util.text.HtmlBuilder
+import com.intellij.openapi.util.text.HtmlChunk
 import com.intellij.openapi.wm.CustomStatusBarWidget
 import com.intellij.openapi.wm.StatusBarWidget
 import com.intellij.openapi.wm.StatusBarWidgetFactory
@@ -17,8 +22,13 @@ import com.intellij.openapi.wm.impl.status.TextPanel
 import com.intellij.ui.BalloonImpl
 import com.intellij.ui.ExperimentalUI
 import com.intellij.ui.GotItComponentBuilder
+import com.intellij.ui.GotItComponentBuilder.Companion.getArrowShift
+import com.intellij.ui.GotItTooltip
+import com.intellij.ui.awt.RelativePoint
+import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import com.intellij.util.ui.components.BorderLayoutPanel
 import com.openmeteo.api.common.time.Time
 import com.openmeteo.api.common.units.TemperatureUnit
 import com.openmeteo.api.common.units.WindSpeedUnit
@@ -27,10 +37,13 @@ import services.WeatherService
 import settings.WeatherWidgetConfigurable
 import settings.WeatherWidgetSettingsState
 import java.awt.*
+import java.awt.event.ActionEvent
+import java.awt.event.ActionListener
 import java.awt.event.MouseEvent
 import java.awt.event.MouseListener
 import java.text.SimpleDateFormat
 import javax.swing.JComponent
+import javax.swing.JLabel
 import javax.swing.JPanel
 import kotlin.math.roundToInt
 
@@ -84,7 +97,7 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
     private fun generateWeatherTable(data: List<Pair<Time, HourData>>): String {
         val isRainExpected = data.any { it.second.rain > 0.0 }
         return buildString {
-            append("<table align=\"center\" border=\"5\">")
+            append("<html><table align=\"center\" border=\"5\">")
             append("<tr><th>Time</th><th>Temp(${temperatureUnitText(model.temperatureUnit)})</th>")
             if (isRainExpected) append("<th>Rain(mm)</th>")
             append("<th>Wind(${windSpeedUnitText(model.windSpeedUnit)})</th><th></th></tr>")
@@ -115,6 +128,7 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
             if (isRainExpected.not()) {
                 append("<br><b>No rain expected</b>")
             }
+            append("</html>")
         }
     }
 
@@ -123,18 +137,24 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
         addMouseListener(object : MouseListener {
             override fun mouseClicked(e: MouseEvent) {
                 if (e.button == 1) {
-                    val balloon = GotItComponentBuilder(generateWeatherTable(model.rainData))
-                        .withLink("Settings") {
+                    val panel = BorderLayoutPanel()
+//                    panel.addToCenter()
+                    val htmlTable =
+                        "<html><table><tr><th>Header 1</th><th>Header 2</th></tr><tr><td>Cell 1</td><td>Cell 2</td></tr></table></html>"
+                    val label = JLabel(generateWeatherTable(model.rainData))
+                    panel.addToCenter(label)
+                    JBPopupFactory.getInstance()
+                        .createBalloonBuilder(panel)
+//                        .createHtmlTextBalloonBuilder(generateWeatherTable(model.rainData), MessageType.INFO, null)
+                        .setFadeoutTime(5000)
+                        .setTitle(model.city)
+                        .setDialogMode(true)
+                        .setClickHandler({
                             ShowSettingsUtil.getInstance()
                                 .showSettingsDialog(null, WeatherWidgetConfigurable::class.java)
-                        }
-                        .withHeader(model.city)
-                        .showButton(false)
-                        .build(this@WidgetComponent)
-                    if (balloon is BalloonImpl) {
-                        balloon.setHideOnClickOutside(true)
-                        balloon.showInCenterOf(this@WidgetComponent)
-                    }
+                        }, true)
+                        .createBalloon()
+                        .show(RelativePoint.getSouthWestOf(this@WidgetComponent), Balloon.Position.above)
                 }
             }
 

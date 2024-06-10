@@ -149,7 +149,7 @@ private class SettingsComponent(settingsState: WeatherWidgetSettingsState) : Dis
         .addLabeledComponent("Show temperature", showTemperature)
         .addLabeledComponent("Temperature unit", temperatureUnit)
         .addSeparator()
-        .addLabeledComponent("Rain bars color", colorPicker)
+        .addLabeledComponent("Precipitation bars color", colorPicker)
         .panel.let {
             BorderLayoutPanel().apply { addToTop(it) }
         }

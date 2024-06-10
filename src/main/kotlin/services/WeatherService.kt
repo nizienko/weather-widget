@@ -31,6 +31,7 @@ class WeatherService(coroutineScope: CoroutineScope) {
     private var cachedRainData = loadWeather()
 
     fun getRainData(): WeatherData {
+        if (lastAttempt + 30_000 > System.currentTimeMillis()) return cachedRainData
         when (cachedRainData) {
             is WeatherData.Error -> update()
             is WeatherData.Present -> if (lastUpdate + 5 * 60_000 < System.currentTimeMillis()) {
@@ -51,13 +52,16 @@ class WeatherService(coroutineScope: CoroutineScope) {
     var activeWidget: WidgetComponent? = null
 
     private var lastUpdate: Long = 0L
+    private var lastAttempt: Long = 0L
     private fun loadWeather(): WeatherData {
         return try {
             WeatherData.Present(WeatherClient(settings).getRainData())
                 .also {
                     lastUpdate = System.currentTimeMillis()
+                    lastAttempt = System.currentTimeMillis()
                 }
         } catch (e: Throwable) {
+            lastAttempt = System.currentTimeMillis()
             val error = buildString {
                 append(e::class.java.name)
                 if (e.message != null) {
@@ -82,7 +86,7 @@ class WeatherClient(private val settings: WeatherWidgetSettingsState) {
     fun getRainData(): List<Pair<Time, HourData>> {
         val forecast = client.forecast {
             hourly = Forecast.Hourly {
-                listOf(rain, temperature2m, windspeed10m, winddirection10m)
+                listOf(precipitation, temperature2m, windspeed10m, winddirection10m)
             }
             forecastDays = 2
             temperatureUnit = settings.temperatureUnit
@@ -91,11 +95,11 @@ class WeatherClient(private val settings: WeatherWidgetSettingsState) {
         }.getOrThrow()
         val now = System.currentTimeMillis() - 60 * 60_000
         Forecast.Hourly.run {
-            val rains = forecast.hourly.getValue(rain).values.filter { (t, _) -> t.time > now }
+            val precipitationData = forecast.hourly.getValue(precipitation).values.filter { (t, _) -> t.time > now }
             val temperature = forecast.hourly.getValue(temperature2m).values.filter { (t, _) -> t.time > now }
             val wind = forecast.hourly.getValue(windspeed10m).values.filter { (t, _) -> t.time > now }
             val windDirection = forecast.hourly.getValue(winddirection10m).values.filter { (t, _) -> t.time > now }
-            val merged = rains.map {
+            val merged = precipitationData.map {
                 it.key to HourData(
                     it.value!!,
                     temperature[it.key] ?: 0.0,
@@ -103,7 +107,7 @@ class WeatherClient(private val settings: WeatherWidgetSettingsState) {
                     windDirection[it.key] ?: 0.0
                 )
             }
-            forecast.hourly.getValue(rain).run {
+            forecast.hourly.getValue(precipitation).run {
                 return merged
                     .toList()
                     .take(service<WeatherWidgetSettingsState>().hours)

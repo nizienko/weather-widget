@@ -90,11 +90,11 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
         is WeatherData.Error -> "<html>${data.message.replace("\n", "<br>")}</html>"
         is WeatherData.Present -> {
             val weatherData = data.data
-            val isRainExpected = weatherData.any { it.second.rain > 0.0 }
+            val isPrecipitationExpected = weatherData.any { it.second.rain > 0.0 }
             buildString {
                 append("<html><table align=\"center\" cellpadding=\"5\">")
                 append("<tr><th>Time</th><th>Temp</th>")
-                if (isRainExpected) append("<th>Rain</th>")
+                if (isPrecipitationExpected) append("<th>Precipitation</th>")
                 append("<th>Wind</th><th></th></tr>")
                 weatherData.forEach { (time, hourData) ->
                     append("<tr>")
@@ -107,7 +107,7 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
                     append(hourData.temperature.roundToInt())
                     append(" " + temperatureUnitText(model.temperatureUnit))
                     append("</td>")
-                    if (isRainExpected) {
+                    if (isPrecipitationExpected) {
                         append("<td>")
                         append(hourData.rain)
                         append(" mm</td>")
@@ -122,8 +122,8 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
                     append("</tr>")
                 }
                 append("</table>")
-                if (isRainExpected.not()) {
-                    append("<br><b>No rain expected</b>")
+                if (isPrecipitationExpected.not()) {
+                    append("<br><b>No precipitation expected</b>")
                 }
                 append("</html>")
             }
@@ -214,27 +214,27 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
             }
 
             is WeatherData.Present -> {
-                val rainData = data.data
-                val isRainExpected = rainData.any { it.second.rain > 0.0 }
+                val weatherData = data.data
+                val isRainExpected = weatherData.any { it.second.rain > 0.0 }
                 if (isRainExpected) {
-                    val stepSize = width / rainData.size
-                    for (i in rainData.indices) {
-                        drawStep(g, i * stepSize, stepSize, rainData[i])
+                    val stepSize = width / weatherData.size
+                    for (i in weatherData.indices) {
+                        drawStep(g, i * stepSize, stepSize, weatherData[i])
                     }
-                    val nowX = calcNowX(rainData, width)
+                    val nowX = calcNowX(weatherData, width)
                     g.color = UIUtil.getErrorForeground()
                     g.drawLine(nowX, height / 2, nowX, height - 2)
                 }
                 val widgetText = StringBuilder()
                 if (model.showWind) {
-                    val direction = rainData.first().second.windDirection
-                    val windSpeed = rainData.first().second.wind.roundToInt().toString()
+                    val direction = weatherData.first().second.windDirection
+                    val windSpeed = weatherData.first().second.wind.roundToInt().toString()
                     widgetText.append(getWindDirectionText(direction) + windSpeed)
                 }
                 if (model.showTemperature) {
                     if (widgetText.isNotEmpty()) widgetText.append(" ")
                     val temperature =
-                        rainData.first().second.temperature.roundToInt().let { if (it > 0) "+$it" else it.toString() }
+                        weatherData.first().second.temperature.roundToInt().let { if (it > 0) "+$it" else it.toString() }
                     widgetText.append(temperature)
                 }
                 if (widgetText.isNotEmpty()) {

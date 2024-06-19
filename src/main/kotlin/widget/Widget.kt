@@ -153,11 +153,7 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
                         is WeatherData.Present -> JBUI.CurrentTheme.GotItTooltip.foreground(true)
                     }
                     val panel = BorderLayoutPanel()
-                    val weather = when(val rainData = model.rainData) {
-                        is WeatherData.Error -> ""
-                        is WeatherData.Present -> rainData.data[0].second.weatherCode.let { WeatherCode.get(it.toInt()) }
-                    }
-                    val title = JBLabel("<html><h2>$weather in ${model.city}</h2></html>", UIUtil.ComponentStyle.LARGE)
+                    val title = JBLabel("<html><h2>${model.weather} in ${model.city}</h2></html>", UIUtil.ComponentStyle.LARGE)
                     val settingsButton = InplaceButton(
                         IconButton(
                             "Settings",
@@ -204,6 +200,7 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
             }
         })
         service<WeatherService>().activeWidget = this
+        updateTooltip()
     }
 
     override fun paint(g: Graphics) {
@@ -295,6 +292,13 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
     override fun dispose() {
         service<WeatherService>().activeWidget = null
     }
+
+    fun updateTooltip() {
+        toolTipText = when(val data = model.rainData) {
+            is WeatherData.Error -> data.message
+            is WeatherData.Present -> model.weather
+        }
+    }
 }
 
 private fun getWindDirectionText(windDirection: Double): String {
@@ -329,6 +333,11 @@ class WidgetModel {
         get() = settings.windSpeedUnit
     val pressureUnit
         get() = settings.pressureUnit
+    val weather
+        get() = when(val rainData = rainData) {
+            is WeatherData.Error -> ""
+            is WeatherData.Present -> rainData.data[0].second.weatherCode.let { WeatherCode.get(it) }
+        }
 }
 
 private fun Double.recalculate(unit: PressureUnit) = this * unit.multiplier

@@ -48,6 +48,7 @@ class WeatherService(coroutineScope: CoroutineScope) {
             invokeLater {
                 activeWidget?.revalidate()
                 activeWidget?.repaint()
+                activeWidget?.updateTooltip()
             }
         }
     }

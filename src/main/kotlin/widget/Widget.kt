@@ -18,7 +18,7 @@ import com.intellij.openapi.wm.StatusBarWidgetFactory
 import com.intellij.openapi.wm.impl.status.TextPanel
 import com.intellij.ui.InplaceButton
 import com.intellij.ui.NewUI
-import com.intellij.ui.awt.RelativePoint
+import com.intellij.ui.awt.AnchoredPoint
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
@@ -27,8 +27,10 @@ import com.openmeteo.api.common.time.Time
 import com.openmeteo.api.common.units.TemperatureUnit
 import com.openmeteo.api.common.units.WindSpeedUnit
 import services.HourData
+import services.WeatherCode
 import services.WeatherData
 import services.WeatherService
+import settings.PressureUnit
 import settings.WeatherWidgetConfigurable
 import settings.WeatherWidgetSettingsState
 import java.awt.*
@@ -95,7 +97,7 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
                 append("<html><table align=\"center\" cellpadding=\"5\">")
                 append("<tr><th>Time</th><th>Temp</th>")
                 if (isPrecipitationExpected) append("<th>Precipitation</th>")
-                append("<th>Wind</th><th></th></tr>")
+                append("<th>Pressure</th><th>Wind</th><th></th><th></th></tr>")
                 weatherData.forEach { (time, hourData) ->
                     append("<tr>")
                     append("<td>")
@@ -109,9 +111,16 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
                     append("</td>")
                     if (isPrecipitationExpected) {
                         append("<td>")
-                        append(hourData.rain)
-                        append(" mm</td>")
+                        if (hourData.weatherCode > 3) append(WeatherCode.get(hourData.weatherCode) + " ")
+                        if (hourData.rain > 0.0) {
+                            append(hourData.rain)
+                            append(" mm")
+                        }
+                        append("</td>")
                     }
+                    append("<td>")
+                    append(hourData.surfacePressure.recalculate(model.pressureUnit).roundToInt().toString() + " " + model.pressureUnit.value)
+                    append("</td>")
                     append("<td>")
                     append(hourData.wind.roundToInt())
                     append(" " + windSpeedUnitText(model.windSpeedUnit))
@@ -144,7 +153,11 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
                         is WeatherData.Present -> JBUI.CurrentTheme.GotItTooltip.foreground(true)
                     }
                     val panel = BorderLayoutPanel()
-                    val title = JBLabel("<html><h2>${model.city}</h2></html>", UIUtil.ComponentStyle.LARGE)
+                    val weather = when(val rainData = model.rainData) {
+                        is WeatherData.Error -> ""
+                        is WeatherData.Present -> rainData.data[0].second.weatherCode.let { WeatherCode.get(it.toInt()) }
+                    }
+                    val title = JBLabel("<html><h2>$weather in ${model.city}</h2></html>", UIUtil.ComponentStyle.LARGE)
                     val settingsButton = InplaceButton(
                         IconButton(
                             "Settings",
@@ -172,7 +185,7 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
                         .setCornerRadius(JBUI.scale(8))
                         .setFadeoutTime(10_000)
                         .createBalloon()
-                        .show(RelativePoint.getCenterOf(this@WidgetComponent), Balloon.Position.above)
+                        .show(AnchoredPoint(AnchoredPoint.Anchor.TOP, this@WidgetComponent), Balloon.Position.above)
                 }
             }
 
@@ -194,6 +207,7 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
     }
 
     override fun paint(g: Graphics) {
+        g.clearRect(0, 0, width, height)
         g.font = TextPanel.getFont()
         super.paintComponents(g)
         setupAntialiasing(g)
@@ -313,4 +327,8 @@ class WidgetModel {
         get() = settings.temperatureUnit
     val windSpeedUnit
         get() = settings.windSpeedUnit
+    val pressureUnit
+        get() = settings.pressureUnit
 }
+
+private fun Double.recalculate(unit: PressureUnit) = this * unit.multiplier

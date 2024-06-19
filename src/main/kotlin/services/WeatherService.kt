@@ -1,5 +1,6 @@
 package services
 
+import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.openmeteo.api.Forecast
@@ -44,8 +45,10 @@ class WeatherService(coroutineScope: CoroutineScope) {
     fun update() {
         activeWidget?.let {
             cachedRainData = loadWeather()
-            activeWidget?.repaint()
-            activeWidget?.revalidate()
+            invokeLater {
+                activeWidget?.revalidate()
+                activeWidget?.repaint()
+            }
         }
     }
 
@@ -55,11 +58,11 @@ class WeatherService(coroutineScope: CoroutineScope) {
     private var lastAttempt: Long = 0L
     private fun loadWeather(): WeatherData {
         return try {
-            WeatherData.Present(WeatherClient(settings).getRainData())
-                .also {
-                    lastUpdate = System.currentTimeMillis()
-                    lastAttempt = System.currentTimeMillis()
-                }
+            val data = WeatherClient(settings).getRainData()
+            WeatherData.Present(data).also {
+                lastUpdate = System.currentTimeMillis()
+                lastAttempt = System.currentTimeMillis()
+            }
         } catch (e: Throwable) {
             lastAttempt = System.currentTimeMillis()
             val error = buildString {
@@ -78,7 +81,15 @@ sealed interface WeatherData {
     class Error(val message: String) : WeatherData
 }
 
-data class HourData(val rain: Double, val temperature: Double, val wind: Double, val windDirection: Double)
+data class HourData(
+    val rain: Double,
+    val temperature: Double,
+    val wind: Double,
+    val windDirection: Double,
+    val weatherCode: Int,
+    val surfacePressure: Double,
+)
+
 class WeatherClient(private val settings: WeatherWidgetSettingsState) {
     private val client = OpenMeteo(settings.latitude, settings.longitude)
 
@@ -86,7 +97,7 @@ class WeatherClient(private val settings: WeatherWidgetSettingsState) {
     fun getRainData(): List<Pair<Time, HourData>> {
         val forecast = client.forecast {
             hourly = Forecast.Hourly {
-                listOf(precipitation, temperature2m, windspeed10m, winddirection10m)
+                listOf(precipitation, temperature2m, windspeed10m, winddirection10m, weathercode, surfacePressure)
             }
             forecastDays = 2
             temperatureUnit = settings.temperatureUnit
@@ -99,12 +110,16 @@ class WeatherClient(private val settings: WeatherWidgetSettingsState) {
             val temperature = forecast.hourly.getValue(temperature2m).values.filter { (t, _) -> t.time > now }
             val wind = forecast.hourly.getValue(windspeed10m).values.filter { (t, _) -> t.time > now }
             val windDirection = forecast.hourly.getValue(winddirection10m).values.filter { (t, _) -> t.time > now }
+            val weatherCode = forecast.hourly.getValue(weathercode).values.filter { (t, _) -> t.time > now }
+            val surfacePressure = forecast.hourly.getValue(surfacePressure).values.filter { (t, _) -> t.time > now }
             val merged = precipitationData.map {
                 it.key to HourData(
                     it.value!!,
                     temperature[it.key] ?: 0.0,
                     wind[it.key] ?: 0.0,
-                    windDirection[it.key] ?: 0.0
+                    windDirection[it.key] ?: 0.0,
+                    weatherCode[it.key]?.toInt() ?: 0,
+                    surfacePressure[it.key] ?: 0.0
                 )
             }
             forecast.hourly.getValue(precipitation).run {

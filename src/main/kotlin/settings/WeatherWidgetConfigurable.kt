@@ -6,11 +6,9 @@ import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.ui.MessageType
 import com.intellij.openapi.ui.popup.util.PopupUtil
 import com.intellij.ui.ColorPanel
-import com.intellij.ui.ColorPicker
 import com.intellij.ui.components.JBCheckBox
+import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
-import com.intellij.ui.tabs.ColorSelectionComponent
-import com.intellij.ui.util.preferredWidth
 import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.components.BorderLayoutPanel
 import com.openmeteo.api.common.units.TemperatureUnit
@@ -40,6 +38,7 @@ class WeatherWidgetConfigurable : Configurable {
                 || ui.colorPicker.selectedColor != settings.rainBarColor
                 || ui.temperatureUnit.selectedItem != settings.temperatureUnit
                 || ui.windSpeedUnit.selectedItem != settings.windSpeedUnit
+                || ui.pressureUnit.selectedItem != settings.pressureUnit
     }
 
     override fun apply() {
@@ -53,6 +52,7 @@ class WeatherWidgetConfigurable : Configurable {
         settings.rainBarColor = ui.colorPicker.selectedColor ?: settings.rainBarColor
         settings.temperatureUnit = ui.temperatureUnit.selectedItem as TemperatureUnit
         settings.windSpeedUnit = ui.windSpeedUnit.selectedItem as WindSpeedUnit
+        settings.pressureUnit = ui.pressureUnit.selectedItem as PressureUnit
         service<WeatherService>().update()
     }
 
@@ -132,6 +132,12 @@ private class SettingsComponent(settingsState: WeatherWidgetSettingsState) : Dis
         selectedItem = settingsState.windSpeedUnit
     }
 
+    val pressureUnit = JComboBox<PressureUnit>().apply {
+        PressureUnit.entries.forEach { addItem(it) }
+        selectedItem = settingsState.pressureUnit
+        setRenderer { _, value, _, _, _ -> JBLabel(value.value) }
+    }
+
     val cityName = JBTextField(settingsState.cityName)
 
     fun getHours(): Int = hours.value as Int
@@ -148,6 +154,7 @@ private class SettingsComponent(settingsState: WeatherWidgetSettingsState) : Dis
         .addSeparator()
         .addLabeledComponent("Show temperature", showTemperature)
         .addLabeledComponent("Temperature unit", temperatureUnit)
+        .addLabeledComponent("Pressure unit", pressureUnit)
         .addSeparator()
         .addLabeledComponent("Precipitation bars color", colorPicker)
         .panel.let {

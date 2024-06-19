@@ -33,6 +33,9 @@ class WeatherWidgetSettingsState : PersistentStateComponent<WeatherWidgetSetting
     @OptionTag(converter = ColorConverter::class)
     var rainBarColor: Color = Color(66, 135, 245)
 
+    @OptionTag(converter = PressureUnitConverter::class)
+    var pressureUnit: PressureUnit = PressureUnit.MMHG
+
     companion object {
         fun getInstance() = service<WeatherWidgetSettingsState>()
     }
@@ -75,3 +78,15 @@ internal class WindSpeedUnitConverter : Converter<WindSpeedUnit>() {
         return value.name
     }
 }
+
+internal class PressureUnitConverter : Converter<PressureUnit>() {
+    override fun fromString(value: String): PressureUnit {
+        return PressureUnit.valueOf(value)
+    }
+
+    override fun toString(value: PressureUnit): String {
+        return value.name
+    }
+}
+
+enum class PressureUnit(val value: String, val multiplier: Double) { MMHG("mmHg", 0.75006375541921), HPA("hPa", 1.0)}

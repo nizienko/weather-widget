@@ -146,11 +146,11 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
                 if (e.button == 1) {
                     val bg = when (model.rainData) {
                         is WeatherData.Error -> JBUI.CurrentTheme.NotificationError.backgroundColor()
-                        is WeatherData.Present -> JBUI.CurrentTheme.GotItTooltip.background(true)
+                        is WeatherData.Present -> JBUI.CurrentTheme.NotificationWarning.backgroundColor()
                     }
                     val fg = when (model.rainData) {
                         is WeatherData.Error -> JBUI.CurrentTheme.NotificationError.foregroundColor()
-                        is WeatherData.Present -> JBUI.CurrentTheme.GotItTooltip.foreground(true)
+                        is WeatherData.Present -> JBUI.CurrentTheme.NotificationWarning.foregroundColor()
                     }
                     val panel = BorderLayoutPanel()
                     val title = JBLabel("<html><h2>${model.weather} in ${model.city}</h2></html>", UIUtil.ComponentStyle.LARGE)
@@ -179,7 +179,7 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
                         .setBorderColor(fg)
                         .setBorderInsets(Insets(2, 15, 10, 15))
                         .setCornerRadius(JBUI.scale(8))
-                        .setFadeoutTime(10_000)
+                        .setFadeoutTime(20_000)
                         .createBalloon()
                         .show(AnchoredPoint(AnchoredPoint.Anchor.TOP, this@WidgetComponent), Balloon.Position.above)
                 }
@@ -204,7 +204,6 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
     }
 
     override fun paint(g: Graphics) {
-        g.clearRect(0, 0, width, height)
         g.font = TextPanel.getFont()
         super.paintComponents(g)
         setupAntialiasing(g)

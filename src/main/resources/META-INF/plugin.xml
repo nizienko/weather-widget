@@ -14,11 +14,12 @@
          Simple HTML elements (text formatting, paragraphs, and lists) can be added inside of <![CDATA[ ]]> tag.
          Guidelines: https://plugins.jetbrains.com/docs/marketplace/plugin-overview-page.html#plugin-description -->
     <description><![CDATA[
-    <p>The Weather Widget displays useful information in the status bar, including:</p>
+    <p>The Weather Widget displays weather information in the status bar, including:</p>
     <ul>
         <li>Temperature</li>
         <li>Wind speed and direction</li>
         <li>Rain forecast with probability for the next hours</li>
+        <li>Atmospheric pressure</li>
     </ul>
     <p>The widget uses the Open-Meteo API. Configure your location coordinates in Settings.</p>
   ]]></description>

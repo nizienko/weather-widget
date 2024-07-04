@@ -90,6 +90,7 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
 
     private fun generateWeatherTable(data: WeatherData): String = when (data) {
         is WeatherData.Error -> "<html>${data.message.replace("\n", "<br>")}</html>"
+        is WeatherData.NotPresent -> "<html>no data</html>"
         is WeatherData.Present -> {
             val weatherData = data.data
             val isPrecipitationExpected = weatherData.any { it.second.rain > 0.0 }
@@ -119,7 +120,10 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
                         append("</td>")
                     }
                     append("<td>")
-                    append(hourData.surfacePressure.recalculate(model.pressureUnit).roundToInt().toString() + " " + model.pressureUnit.value)
+                    append(
+                        hourData.surfacePressure.recalculate(model.pressureUnit).roundToInt()
+                            .toString() + " " + model.pressureUnit.value
+                    )
                     append("</td>")
                     append("<td>")
                     append(hourData.wind.roundToInt())
@@ -146,14 +150,15 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
                 if (e.button == 1) {
                     val bg = when (model.rainData) {
                         is WeatherData.Error -> JBUI.CurrentTheme.NotificationError.backgroundColor()
-                        is WeatherData.Present -> JBUI.CurrentTheme.NotificationWarning.backgroundColor()
+                        is WeatherData.Present, WeatherData.NotPresent -> JBUI.CurrentTheme.NotificationWarning.backgroundColor()
                     }
                     val fg = when (model.rainData) {
                         is WeatherData.Error -> JBUI.CurrentTheme.NotificationError.foregroundColor()
-                        is WeatherData.Present -> JBUI.CurrentTheme.NotificationWarning.foregroundColor()
+                        is WeatherData.Present, WeatherData.NotPresent -> JBUI.CurrentTheme.NotificationWarning.foregroundColor()
                     }
                     val panel = BorderLayoutPanel()
-                    val title = JBLabel("<html><h2>${model.weather} in ${model.city}</h2></html>", UIUtil.ComponentStyle.LARGE)
+                    val title =
+                        JBLabel("<html><h2>${model.weather} in ${model.city}</h2></html>", UIUtil.ComponentStyle.LARGE)
                     val settingsButton = InplaceButton(
                         IconButton(
                             "Settings",
@@ -217,7 +222,7 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
         }
 
         when (val data = model.rainData) {
-            is WeatherData.Error -> {
+            is WeatherData.Error, WeatherData.NotPresent -> {
                 val errorText = "No data"
                 g.color = JBUI.CurrentTheme.StatusBar.Widget.FOREGROUND
                 g.drawString(errorText, width / 2 - g.fontMetrics.stringWidth(errorText) / 2, textY(errorText))
@@ -244,7 +249,8 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
                 if (model.showTemperature) {
                     if (widgetText.isNotEmpty()) widgetText.append(" ")
                     val temperature =
-                        weatherData.first().second.temperature.roundToInt().let { if (it > 0) "+$it" else it.toString() }
+                        weatherData.first().second.temperature.roundToInt()
+                            .let { if (it > 0) "+$it" else it.toString() }
                     widgetText.append(temperature)
                 }
                 if (widgetText.isNotEmpty()) {
@@ -275,10 +281,13 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
         g.fillRect(startPoint + 1, height - level - 1, stepWidth - 2, level)
     }
 
-    private val maxValue = 1.0
+    private val maxValue = 15.0
     private fun calcLevel(value: Double, maxInt: Int): Int {
+        if (value == 0.0) return 0
         if (value >= maxValue) return maxInt
-        return (value % maxValue * maxInt).toInt()
+        val barHeight = value / maxValue * maxInt
+        if (barHeight <= 3) return 3
+        return barHeight.toInt()
     }
 
     private fun calcNowX(rainData: List<Pair<Time, HourData>>, maxWidth: Int): Int {
@@ -293,8 +302,9 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
     }
 
     fun updateTooltip() {
-        toolTipText = when(val data = model.rainData) {
+        toolTipText = when (val data = model.rainData) {
             is WeatherData.Error -> data.message
+            is WeatherData.NotPresent -> ""
             is WeatherData.Present -> model.weather
         }
     }
@@ -333,8 +343,8 @@ class WidgetModel {
     val pressureUnit
         get() = settings.pressureUnit
     val weather
-        get() = when(val rainData = rainData) {
-            is WeatherData.Error -> ""
+        get() = when (val rainData = rainData) {
+            is WeatherData.Error, WeatherData.NotPresent -> ""
             is WeatherData.Present -> rainData.data[0].second.weatherCode.let { WeatherCode.get(it) }
         }
 }

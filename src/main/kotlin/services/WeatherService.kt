@@ -11,6 +11,7 @@ import com.openmeteo.api.common.time.Timezone
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import services.WeatherData.*
 import settings.WeatherWidgetSettingsState
 import widget.WidgetComponent
 import java.time.ZoneId
@@ -29,13 +30,14 @@ class WeatherService(coroutineScope: CoroutineScope) {
     }
 
     private val settings = service<WeatherWidgetSettingsState>()
-    private var cachedRainData = loadWeather()
+    private var cachedRainData: WeatherData = NotPresent
 
     fun getRainData(): WeatherData {
         if (lastAttempt + 30_000 > System.currentTimeMillis()) return cachedRainData
         when (cachedRainData) {
-            is WeatherData.Error -> update()
-            is WeatherData.Present -> if (lastUpdate + 5 * 60_000 < System.currentTimeMillis()) {
+            is NotPresent -> update()
+            is Error -> update()
+            is Present -> if (lastUpdate + 5 * 60_000 < System.currentTimeMillis()) {
                 update()
             }
         }
@@ -60,7 +62,7 @@ class WeatherService(coroutineScope: CoroutineScope) {
     private fun loadWeather(): WeatherData {
         return try {
             val data = WeatherClient(settings).getRainData()
-            WeatherData.Present(data).also {
+            Present(data).also {
                 lastUpdate = System.currentTimeMillis()
                 lastAttempt = System.currentTimeMillis()
             }
@@ -72,13 +74,14 @@ class WeatherService(coroutineScope: CoroutineScope) {
                     append(":\n${e.message}")
                 }
             }
-            WeatherData.Error(error)
+            Error(error)
         }
     }
 }
 
 sealed interface WeatherData {
     class Present(val data: List<Pair<Time, HourData>>) : WeatherData
+    data object NotPresent: WeatherData
     class Error(val message: String) : WeatherData
 }
 

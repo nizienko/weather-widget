@@ -3,6 +3,7 @@ package settings
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.service
 import com.intellij.openapi.options.Configurable
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.MessageType
 import com.intellij.openapi.ui.popup.util.PopupUtil
 import com.intellij.ui.ColorPanel
@@ -13,6 +14,7 @@ import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.components.BorderLayoutPanel
 import com.openmeteo.api.common.units.TemperatureUnit
 import com.openmeteo.api.common.units.WindSpeedUnit
+import kotlinx.coroutines.launch
 import services.WeatherService
 import services.findClosestCity
 import javax.swing.*
@@ -53,7 +55,7 @@ class WeatherWidgetConfigurable : Configurable {
         settings.temperatureUnit = ui.temperatureUnit.selectedItem as TemperatureUnit
         settings.windSpeedUnit = ui.windSpeedUnit.selectedItem as WindSpeedUnit
         settings.pressureUnit = ui.pressureUnit.selectedItem as PressureUnit
-        service<WeatherService>().update()
+        with(service<WeatherService>()) { scope.launch { update() } }
     }
 
 
@@ -74,7 +76,7 @@ private class SettingsComponent(settingsState: WeatherWidgetSettingsState) : Dis
                 (input as? JBTextField)?.text?.toFloat() ?: return false
                 cityName.text = findClosestCity(latitude.text.toFloat(), longitude.text.toFloat())
                 true
-            } catch (e: NumberFormatException) {
+            } catch (_: NumberFormatException) {
                 PopupUtil.showBalloonForComponent(
                     input,
                     "Wrong format",
@@ -122,17 +124,17 @@ private class SettingsComponent(settingsState: WeatherWidgetSettingsState) : Dis
         selectedColor = settingsState.rainBarColor
     }
 
-    val temperatureUnit = JComboBox<TemperatureUnit>().apply {
+    val temperatureUnit = ComboBox<TemperatureUnit>().apply {
         TemperatureUnit.entries.forEach { addItem(it) }
         selectedItem = settingsState.temperatureUnit
     }
 
-    val windSpeedUnit = JComboBox<WindSpeedUnit>().apply {
+    val windSpeedUnit = ComboBox<WindSpeedUnit>().apply {
         listOf(WindSpeedUnit.KilometresPerHour, WindSpeedUnit.MetresPerSeconds).forEach { addItem(it) }
         selectedItem = settingsState.windSpeedUnit
     }
 
-    val pressureUnit = JComboBox<PressureUnit>().apply {
+    val pressureUnit = ComboBox<PressureUnit>().apply {
         PressureUnit.entries.forEach { addItem(it) }
         selectedItem = settingsState.pressureUnit
         setRenderer { _, value, _, _, _ -> JBLabel(value.value) }

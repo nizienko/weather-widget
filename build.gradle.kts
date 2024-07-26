@@ -26,12 +26,12 @@ kotlin {
 intellij {
     version.set("2024.1")
     type.set("IC")
+    updateSinceUntilBuild.set(false)
 }
 
 tasks {
     patchPluginXml {
         sinceBuild.set("233.1")
-        untilBuild.set("242.*")
     }
     withType<JavaCompile> {
         sourceCompatibility = "17"

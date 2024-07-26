@@ -24,6 +24,7 @@
     <p>The widget uses the Open-Meteo API. Configure your location coordinates in Settings.</p>
   ]]></description>
 
+    <idea-version since-build="233.1"/>
     <!-- Product and plugin compatibility requirements.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
     <depends>com.intellij.modules.platform</depends>

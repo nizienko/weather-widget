@@ -1,6 +1,6 @@
 package services
 
-import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.openmeteo.api.Forecast
@@ -9,22 +9,26 @@ import com.openmeteo.api.common.Response
 import com.openmeteo.api.common.time.Time
 import com.openmeteo.api.common.time.Timezone
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import services.WeatherData.*
 import settings.WeatherWidgetSettingsState
 import widget.WidgetComponent
 import java.time.ZoneId
 
 @Service
-class WeatherService(coroutineScope: CoroutineScope) {
+class WeatherService(val scope: CoroutineScope) {
     init {
-        coroutineScope.launch {
-            while (true) {
-                if (activeWidget != null) {
-                    getRainData()
+        scope.launch {
+            withContext(Dispatchers.Default) {
+                while (true) {
+                    if (activeWidget != null) {
+                        getRainData()
+                    }
+                    delay(20_000)
                 }
-                delay(20_000)
             }
         }
     }
@@ -35,19 +39,19 @@ class WeatherService(coroutineScope: CoroutineScope) {
     fun getRainData(): WeatherData {
         if (lastAttempt + 30_000 > System.currentTimeMillis()) return cachedRainData
         when (cachedRainData) {
-            is NotPresent -> update()
-            is Error -> update()
+            is NotPresent -> scope.launch { update() }
+            is Error -> scope.launch { update() }
             is Present -> if (lastUpdate + 5 * 60_000 < System.currentTimeMillis()) {
-                update()
+                scope.launch { update() }
             }
         }
         return cachedRainData
     }
 
-    fun update() {
+    suspend fun update() {
         activeWidget?.let {
             cachedRainData = loadWeather()
-            invokeLater {
+            withContext(Dispatchers.EDT) {
                 activeWidget?.revalidate()
                 activeWidget?.repaint()
                 activeWidget?.updateTooltip()
@@ -59,8 +63,8 @@ class WeatherService(coroutineScope: CoroutineScope) {
 
     private var lastUpdate: Long = 0L
     private var lastAttempt: Long = 0L
-    private fun loadWeather(): WeatherData {
-        return try {
+    private suspend fun loadWeather(): WeatherData = withContext(Dispatchers.IO) {
+        return@withContext try {
             val data = WeatherClient(settings).getRainData()
             Present(data).also {
                 lastUpdate = System.currentTimeMillis()
@@ -81,7 +85,7 @@ class WeatherService(coroutineScope: CoroutineScope) {
 
 sealed interface WeatherData {
     class Present(val data: List<Pair<Time, HourData>>) : WeatherData
-    data object NotPresent: WeatherData
+    data object NotPresent : WeatherData
     class Error(val message: String) : WeatherData
 }
 

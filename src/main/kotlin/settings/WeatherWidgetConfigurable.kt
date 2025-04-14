@@ -5,6 +5,9 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.MessageType
+import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.openapi.ui.popup.PopupStep
+import com.intellij.openapi.ui.popup.util.BaseListPopupStep
 import com.intellij.openapi.ui.popup.util.PopupUtil
 import com.intellij.ui.ColorPanel
 import com.intellij.ui.components.JBCheckBox
@@ -14,8 +17,9 @@ import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.components.BorderLayoutPanel
 import com.openmeteo.api.common.units.TemperatureUnit
 import com.openmeteo.api.common.units.WindSpeedUnit
-import kotlinx.coroutines.launch
+import services.CapitalCity
 import services.WeatherService
+import services.cities
 import services.findClosestCity
 import javax.swing.*
 import javax.swing.event.DocumentEvent
@@ -55,7 +59,7 @@ class WeatherWidgetConfigurable : Configurable {
         settings.temperatureUnit = ui.temperatureUnit.selectedItem as TemperatureUnit
         settings.windSpeedUnit = ui.windSpeedUnit.selectedItem as WindSpeedUnit
         settings.pressureUnit = ui.pressureUnit.selectedItem as PressureUnit
-        with(service<WeatherService>()) { scope.launch { update() } }
+        service<WeatherService>().forceWeatherCheck()
     }
 
 
@@ -106,6 +110,29 @@ private class SettingsComponent(settingsState: WeatherWidgetSettingsState) : Dis
         document.addDocumentListener(CityNameListener())
     }
 
+    private val findCityButton = JButton("Find City").apply {
+        addActionListener {
+            JBPopupFactory.getInstance().createListPopup(object : BaseListPopupStep<CapitalCity>(null, cities.sortedBy { it.name }) {
+                override fun onChosen(
+                    selectedValue: CapitalCity,
+                    finalChoice: Boolean
+                ): PopupStep<*>? {
+                    cityName.text = selectedValue.name
+                    latitude.text = selectedValue.latitude.toString()
+                    longitude.text = selectedValue.longitude.toString()
+                    return FINAL_CHOICE
+                }
+                override fun isSpeedSearchEnabled(): Boolean {
+                    return true
+                }
+
+                override fun getTextFor(value: CapitalCity): String {
+                    return value.name
+                }
+            }).showUnderneathOf(this)
+        }
+    }
+
     private fun findCity() {
         cityName.text = findClosestCity(latitude.text.toFloat(), longitude.text.toFloat())
     }
@@ -145,9 +172,12 @@ private class SettingsComponent(settingsState: WeatherWidgetSettingsState) : Dis
     fun getHours(): Int = hours.value as Int
 
     fun getComponent(): JComponent = FormBuilder.createFormBuilder()
+        .addLabeledComponent("Place", BorderLayoutPanel().apply {
+            addToCenter(cityName)
+            addToRight(findCityButton)
+        })
         .addLabeledComponent("Latitude", latitude)
         .addLabeledComponent("Longitude", longitude)
-        .addLabeledComponent("Place name", cityName)
         .addSeparator()
         .addLabeledComponent("Show next hours", hours)
         .addLabeledComponent("Show wind", showWindDirection)

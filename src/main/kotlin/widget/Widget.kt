@@ -5,12 +5,14 @@ package widget
 import com.intellij.icons.AllIcons
 import com.intellij.ide.ui.UISettings.Companion.setupAntialiasing
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.service
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.Balloon
 import com.intellij.openapi.ui.popup.IconButton
 import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.wm.CustomStatusBarWidget
 import com.intellij.openapi.wm.StatusBarWidget
@@ -26,6 +28,10 @@ import com.intellij.util.ui.components.BorderLayoutPanel
 import com.openmeteo.api.common.time.Time
 import com.openmeteo.api.common.units.TemperatureUnit
 import com.openmeteo.api.common.units.WindSpeedUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import services.HourData
 import services.WeatherCode
 import services.WeatherData
@@ -61,19 +67,12 @@ private class WeatherWidget : CustomStatusBarWidget {
         return "weatherWidget"
     }
 
-    private var widget: WidgetComponent? = null
     override fun getComponent(): JComponent {
-        widget = WidgetComponent(WidgetModel())
-        return widget ?: throw IllegalStateException()
-    }
-
-    override fun dispose() {
-        super.dispose()
-        widget?.dispose()
+        return WidgetComponent(WidgetModel(), this)
     }
 }
 
-class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
+class WidgetComponent(private val model: WidgetModel, parent: Disposable) : JPanel(), Disposable {
     private val formatter = SimpleDateFormat("HH")
 
     private fun temperatureUnitText(unit: TemperatureUnit) = when (unit) {
@@ -144,21 +143,22 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
     }
 
     init {
+        Disposer.register(parent, this)
         preferredSize = Dimension(60, preferredSize.height)
         addMouseListener(object : MouseListener {
             override fun mouseClicked(e: MouseEvent) {
                 if (e.button == 1) {
                     val bg = when (model.rainData) {
                         is WeatherData.Error -> JBUI.CurrentTheme.NotificationError.backgroundColor()
-                        is WeatherData.Present, WeatherData.NotPresent -> JBUI.CurrentTheme.NotificationWarning.backgroundColor()
+                        is WeatherData.Present, is WeatherData.NotPresent -> JBUI.CurrentTheme.NotificationWarning.backgroundColor()
                     }
                     val fg = when (model.rainData) {
                         is WeatherData.Error -> JBUI.CurrentTheme.NotificationError.foregroundColor()
-                        is WeatherData.Present, WeatherData.NotPresent -> JBUI.CurrentTheme.NotificationWarning.foregroundColor()
+                        is WeatherData.Present, is WeatherData.NotPresent -> JBUI.CurrentTheme.NotificationWarning.foregroundColor()
                     }
                     val panel = BorderLayoutPanel()
                     val title =
-                        JBLabel("<html><h2>${model.weather} in ${model.city}</h2></html>", UIUtil.ComponentStyle.LARGE)
+                        JBLabel("<html><h2>${model.weatherDescription} in ${model.city}</h2></html>", UIUtil.ComponentStyle.LARGE)
                     val settingsButton = InplaceButton(
                         IconButton(
                             "Settings",
@@ -182,7 +182,7 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
                         .createBalloonBuilder(panel)
                         .setFillColor(bg)
                         .setBorderColor(fg)
-                        .setBorderInsets(Insets(2, 15, 10, 15))
+                        .setBorderInsets(JBUI.insets(2, 15, 10, 15))
                         .setCornerRadius(JBUI.scale(8))
                         .setFadeoutTime(20_000)
                         .createBalloon()
@@ -204,8 +204,22 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
                 model.hover = false
             }
         })
-        service<WeatherService>().activeWidget = this
         updateTooltip()
+    }
+
+    private val updateDataJob = service<WeatherService>().scope.launch {
+        service<WeatherService>().weatherDataFlow.collect {
+            withContext(Dispatchers.EDT) {
+                repaint()
+                updateTooltip()
+            }
+        }
+    }
+    private val repaintJob = service<WeatherService>().scope.launch {
+        while(true) {
+            delay(30_000)
+            repaint()
+        }
     }
 
     override fun paint(g: Graphics) {
@@ -222,7 +236,7 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
         }
 
         when (val data = model.rainData) {
-            is WeatherData.Error, WeatherData.NotPresent -> {
+            is WeatherData.Error, is WeatherData.NotPresent -> {
                 val errorText = "No data"
                 g.color = JBUI.CurrentTheme.StatusBar.Widget.FOREGROUND
                 g.drawString(errorText, width / 2 - g.fontMetrics.stringWidth(errorText) / 2, textY(errorText))
@@ -298,14 +312,16 @@ class WidgetComponent(private val model: WidgetModel) : JPanel(), Disposable {
     }
 
     override fun dispose() {
-        service<WeatherService>().activeWidget = null
+        updateDataJob.cancel()
+        repaintJob.cancel()
+        println("Disposed!")
     }
 
     fun updateTooltip() {
         toolTipText = when (val data = model.rainData) {
             is WeatherData.Error -> data.message
             is WeatherData.NotPresent -> ""
-            is WeatherData.Present -> model.weather
+            is WeatherData.Present -> model.weatherDescription
         }
     }
 }
@@ -326,7 +342,7 @@ class WidgetModel {
     private val service = service<WeatherService>()
     private val settings = WeatherWidgetSettingsState.getInstance()
     val rainData
-        get() = service.getRainData()
+        get() = service.weatherDataFlow.value
     var hover: Boolean = false
     val showWind
         get() = settings.showWind
@@ -342,11 +358,13 @@ class WidgetModel {
         get() = settings.windSpeedUnit
     val pressureUnit
         get() = settings.pressureUnit
-    val weather
+    val weatherDescription
         get() = when (val rainData = rainData) {
-            is WeatherData.Error, WeatherData.NotPresent -> ""
+            is WeatherData.Error -> ""
+            is WeatherData.NotPresent -> ""
             is WeatherData.Present -> rainData.data[0].second.weatherCode.let { WeatherCode.get(it) }
         }
+
 }
 
 private fun Double.recalculate(unit: PressureUnit) = this * unit.multiplier

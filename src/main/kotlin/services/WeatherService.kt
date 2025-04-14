@@ -1,6 +1,5 @@
 package services
 
-import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.openmeteo.api.Forecast
@@ -11,82 +10,69 @@ import com.openmeteo.api.common.time.Timezone
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import services.WeatherData.*
 import settings.WeatherWidgetSettingsState
-import widget.WidgetComponent
 import java.time.ZoneId
 
 @Service
 class WeatherService(val scope: CoroutineScope) {
+    private val _weatherDataFlow: MutableStateFlow<WeatherData> =
+        MutableStateFlow(NotPresent(0L))
+    val weatherDataFlow = _weatherDataFlow.asStateFlow()
+
     init {
         scope.launch {
-            withContext(Dispatchers.Default) {
-                while (true) {
-                    if (activeWidget != null) {
-                        getRainData()
-                    }
-                    delay(20_000)
+            while (true) {
+                val lastState = weatherDataFlow.value
+                val needUpdate = when (lastState) {
+                    is Error -> System.currentTimeMillis() - lastState.time > 30_000
+                    is NotPresent -> System.currentTimeMillis() - lastState.time > 5_000
+                    is Present -> System.currentTimeMillis() - lastState.time > 5 * 60_000
                 }
+                if (needUpdate) {
+                    val data = withContext(Dispatchers.IO) { loadWeather() }
+                    _weatherDataFlow.emit(data)
+                }
+                delay(20_000)
             }
         }
     }
 
-    private val settings = service<WeatherWidgetSettingsState>()
-    private var cachedRainData: WeatherData = NotPresent
-
-    fun getRainData(): WeatherData {
-        if (lastAttempt + 30_000 > System.currentTimeMillis()) return cachedRainData
-        when (cachedRainData) {
-            is NotPresent -> scope.launch { update() }
-            is Error -> scope.launch { update() }
-            is Present -> if (lastUpdate + 5 * 60_000 < System.currentTimeMillis()) {
-                scope.launch { update() }
-            }
-        }
-        return cachedRainData
-    }
-
-    suspend fun update() {
-        activeWidget?.let {
-            cachedRainData = loadWeather()
-            withContext(Dispatchers.EDT) {
-                activeWidget?.revalidate()
-                activeWidget?.repaint()
-                activeWidget?.updateTooltip()
-            }
+    fun forceWeatherCheck() {
+        scope.launch {
+            val data = withContext(Dispatchers.IO) { loadWeather() }
+            _weatherDataFlow.emit(data)
         }
     }
 
-    var activeWidget: WidgetComponent? = null
-
-    private var lastUpdate: Long = 0L
-    private var lastAttempt: Long = 0L
-    private suspend fun loadWeather(): WeatherData = withContext(Dispatchers.IO) {
-        return@withContext try {
+    private fun loadWeather(): WeatherData {
+        val time = System.currentTimeMillis()
+        val settings = service<WeatherWidgetSettingsState>()
+        return try {
             val data = WeatherClient(settings).getRainData()
-            Present(data).also {
-                lastUpdate = System.currentTimeMillis()
-                lastAttempt = System.currentTimeMillis()
-            }
+            Present(data, time)
         } catch (e: Throwable) {
-            lastAttempt = System.currentTimeMillis()
             val error = buildString {
                 append(e::class.java.name)
                 if (e.message != null) {
                     append(":\n${e.message}")
                 }
             }
-            Error(error)
+            Error(error, time)
         }
     }
 }
 
 sealed interface WeatherData {
-    class Present(val data: List<Pair<Time, HourData>>) : WeatherData
-    data object NotPresent : WeatherData
-    class Error(val message: String) : WeatherData
+    val time: Long
+
+    class Present(val data: List<Pair<Time, HourData>>, override val time: Long) : WeatherData
+    class NotPresent(override val time: Long) : WeatherData
+    class Error(val message: String, override val time: Long) : WeatherData
 }
 
 data class HourData(

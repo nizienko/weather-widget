@@ -12,6 +12,8 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.Balloon
 import com.intellij.openapi.ui.popup.IconButton
 import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.openapi.ui.popup.PopupStep
+import com.intellij.openapi.ui.popup.util.BaseListPopupStep
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.wm.CustomStatusBarWidget
@@ -37,12 +39,15 @@ import services.WeatherCode
 import services.WeatherData
 import services.WeatherService
 import settings.PressureUnit
+import settings.SavedLocation
 import settings.WeatherWidgetConfigurable
 import settings.WeatherWidgetSettingsState
 import java.awt.*
 import java.awt.event.MouseEvent
 import java.awt.event.MouseListener
 import java.text.SimpleDateFormat
+import javax.swing.Box
+import javax.swing.BoxLayout
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
@@ -74,6 +79,10 @@ private class WeatherWidget : CustomStatusBarWidget {
 
 class WidgetComponent(private val model: WidgetModel, parent: Disposable) : JPanel(), Disposable {
     private val formatter = SimpleDateFormat("HH")
+    private var popupBalloon: Balloon? = null
+    private var popupTitle: JBLabel? = null
+    private var popupTable: JLabel? = null
+    private var popupLocationButton: InplaceButton? = null
 
     private fun temperatureUnitText(unit: TemperatureUnit) = when (unit) {
         TemperatureUnit.Celsius -> "°C"
@@ -156,29 +165,8 @@ class WidgetComponent(private val model: WidgetModel, parent: Disposable) : JPan
                         is WeatherData.Error -> JBUI.CurrentTheme.NotificationError.foregroundColor()
                         is WeatherData.Present, is WeatherData.NotPresent -> JBUI.CurrentTheme.NotificationWarning.foregroundColor()
                     }
-                    val panel = BorderLayoutPanel()
-                    val title =
-                        JBLabel("<html><h2>${model.weatherDescription} in ${model.city}</h2></html>", UIUtil.ComponentStyle.LARGE)
-                    val settingsButton = InplaceButton(
-                        IconButton(
-                            "Settings",
-                            AllIcons.General.Gear,
-                            AllIcons.General.GearPlain
-                        )
-                    ) {
-                        ShowSettingsUtil.getInstance()
-                            .showSettingsDialog(null, WeatherWidgetConfigurable::class.java)
-                    }
-                    panel.background = bg
-                    panel.foreground = fg
-                    panel.addToTop(BorderLayoutPanel().apply {
-                        background = bg
-                        foreground = fg
-                        addToCenter(title)
-                        addToRight(settingsButton)
-                    })
-                    panel.addToCenter(JLabel(generateWeatherTable(model.rainData)))
-                    JBPopupFactory.getInstance()
+                    val panel = buildPopupPanel(bg, fg)
+                    popupBalloon = JBPopupFactory.getInstance()
                         .createBalloonBuilder(panel)
                         .setFillColor(bg)
                         .setBorderColor(fg)
@@ -186,7 +174,12 @@ class WidgetComponent(private val model: WidgetModel, parent: Disposable) : JPan
                         .setCornerRadius(JBUI.scale(8))
                         .setFadeoutTime(20_000)
                         .createBalloon()
-                        .show(AnchoredPoint(AnchoredPoint.Anchor.TOP, this@WidgetComponent), Balloon.Position.above)
+                        .also {
+                            it.show(
+                                AnchoredPoint(AnchoredPoint.Anchor.TOP, this@WidgetComponent),
+                                Balloon.Position.above
+                            )
+                        }
                 }
             }
 
@@ -207,11 +200,104 @@ class WidgetComponent(private val model: WidgetModel, parent: Disposable) : JPan
         updateTooltip()
     }
 
+    private fun buildLocationPicker(): JComponent {
+        val settings = WeatherWidgetSettingsState.getInstance()
+        val locations = settings.savedLocations
+        if (locations.isEmpty()) return JPanel()
+        lateinit var iconButton: InplaceButton
+        iconButton = InplaceButton(
+            IconButton(
+                "Location",
+                AllIcons.Actions.Find,
+                AllIcons.Actions.Find
+            )
+        ) {
+            JBPopupFactory.getInstance().createListPopup(
+                object : BaseListPopupStep<SavedLocation>(null, locations) {
+                    override fun onChosen(
+                        selectedValue: SavedLocation,
+                        finalChoice: Boolean
+                    ): PopupStep<*>? {
+                        val index = locations.indexOf(selectedValue)
+                        if (index >= 0) {
+                            settings.selectedLocationIndex = index
+                            service<WeatherService>().forceWeatherCheck()
+                            updateTooltip()
+                            updatePopupContent()
+                            repaint()
+                        }
+                        return FINAL_CHOICE
+                    }
+
+                    override fun getTextFor(value: SavedLocation): String = value.name
+                }
+            ).showUnderneathOf(iconButton)
+        }
+        iconButton.isOpaque = false
+        iconButton.toolTipText = "Location: ${model.city}"
+        popupLocationButton = iconButton
+        return iconButton
+    }
+
+    private fun buildPopupPanel(bg: Color, fg: Color): JComponent {
+        val panel = BorderLayoutPanel()
+        popupTitle = JBLabel(buildPopupTitle(), UIUtil.ComponentStyle.LARGE).also {
+            it.background = bg
+            it.foreground = fg
+        }
+        popupTable = JLabel(generateWeatherTable(model.rainData)).also {
+            it.background = bg
+            it.foreground = fg
+        }
+        val locationPicker = buildLocationPicker()
+        val settingsButton = InplaceButton(
+            IconButton(
+                "Settings",
+                AllIcons.General.Gear,
+                AllIcons.General.GearPlain
+            )
+        ) {
+            ShowSettingsUtil.getInstance()
+                .showSettingsDialog(null, WeatherWidgetConfigurable::class.java)
+        }
+        settingsButton.isOpaque = false
+        panel.background = bg
+        panel.foreground = fg
+        panel.addToTop(BorderLayoutPanel().apply {
+            background = bg
+            foreground = fg
+            addToCenter(popupTitle!!)
+            addToRight(JPanel().apply {
+                isOpaque = false
+                layout = BoxLayout(this, BoxLayout.X_AXIS)
+                add(locationPicker)
+                add(Box.createHorizontalStrut(JBUI.scale(6)))
+                add(settingsButton)
+            })
+        })
+        panel.addToCenter(popupTable!!)
+        return panel
+    }
+
+    private fun buildPopupTitle(): String {
+        val description = model.weatherDescription.ifBlank { "Weather" }
+        return "<html><h2>${description} in ${model.city}</h2></html>"
+    }
+
+    private fun updatePopupContent() {
+        val balloon = popupBalloon ?: return
+        if (balloon.isDisposed) return
+        popupTitle?.text = buildPopupTitle()
+        popupTable?.text = generateWeatherTable(model.rainData)
+        popupLocationButton?.toolTipText = "Location: ${model.city}"
+    }
+
     private val updateDataJob = service<WeatherService>().scope.launch {
         service<WeatherService>().weatherDataFlow.collect {
             withContext(Dispatchers.EDT) {
                 repaint()
                 updateTooltip()
+                updatePopupContent()
             }
         }
     }
@@ -281,7 +367,6 @@ class WidgetComponent(private val model: WidgetModel, parent: Disposable) : JPan
                 }
             }
         }
-        g.dispose()
     }
 
     private fun drawStep(
@@ -320,8 +405,8 @@ class WidgetComponent(private val model: WidgetModel, parent: Disposable) : JPan
     fun updateTooltip() {
         toolTipText = when (val data = model.rainData) {
             is WeatherData.Error -> data.message
-            is WeatherData.NotPresent -> ""
-            is WeatherData.Present -> model.weatherDescription
+            is WeatherData.NotPresent -> "Loading ${model.city}"
+            is WeatherData.Present -> "${model.weatherDescription} in ${model.city}"
         }
     }
 }
@@ -349,7 +434,7 @@ class WidgetModel {
     val showTemperature
         get() = settings.showTemperature
     val city: String
-        get() = settings.cityName
+        get() = settings.currentLocation().name
     val rainColor
         get() = settings.rainBarColor
     val temperatureUnit

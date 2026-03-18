@@ -12,15 +12,17 @@ import com.intellij.openapi.ui.popup.util.PopupUtil
 import com.intellij.ui.ColorPanel
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
+import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.components.BorderLayoutPanel
 import com.openmeteo.api.common.units.TemperatureUnit
 import com.openmeteo.api.common.units.WindSpeedUnit
 import services.CapitalCity
 import services.WeatherService
 import services.cities
-import services.findClosestCity
+import services.guessCityByTimezone
 import javax.swing.*
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
@@ -33,32 +35,30 @@ class WeatherWidgetConfigurable : Configurable {
 
     override fun isModified(): Boolean {
         val settings = WeatherWidgetSettingsState.getInstance()
-        val latitude = ui.latitude.text.toFloatOrNull() ?: return false
-        val longitude = ui.longitude.text.toFloatOrNull() ?: return false
-        return latitude != settings.latitude
-                || longitude != settings.longitude
-                || ui.getHours() != settings.hours
+        val locationsModified = ui.getSavedLocations() != settings.savedLocations
+        val activeIndexModified = ui.getActiveLocationIndex() != settings.selectedLocationIndex
+        return ui.getHours() != settings.hours
                 || ui.showWindDirection.isSelected != settings.showWind
                 || ui.showTemperature.isSelected != settings.showTemperature
-                || ui.cityName.text != settings.cityName
                 || ui.colorPicker.selectedColor != settings.rainBarColor
                 || ui.temperatureUnit.selectedItem != settings.temperatureUnit
                 || ui.windSpeedUnit.selectedItem != settings.windSpeedUnit
                 || ui.pressureUnit.selectedItem != settings.pressureUnit
+                || locationsModified
+                || activeIndexModified
     }
 
     override fun apply() {
         val settings = WeatherWidgetSettingsState.getInstance()
-        settings.latitude = ui.latitude.text.toFloat()
-        settings.longitude = ui.longitude.text.toFloat()
         settings.hours = ui.getHours()
         settings.showWind = ui.showWindDirection.isSelected
         settings.showTemperature = ui.showTemperature.isSelected
-        settings.cityName = ui.cityName.text
         settings.rainBarColor = ui.colorPicker.selectedColor ?: settings.rainBarColor
         settings.temperatureUnit = ui.temperatureUnit.selectedItem as TemperatureUnit
         settings.windSpeedUnit = ui.windSpeedUnit.selectedItem as WindSpeedUnit
         settings.pressureUnit = ui.pressureUnit.selectedItem as PressureUnit
+        settings.savedLocations = ui.getSavedLocations().toMutableList()
+        settings.selectedLocationIndex = ui.getActiveLocationIndex()
         service<WeatherService>().forceWeatherCheck()
     }
 
@@ -78,7 +78,6 @@ private class SettingsComponent(settingsState: WeatherWidgetSettingsState) : Dis
         override fun verify(input: JComponent): Boolean {
             return try {
                 (input as? JBTextField)?.text?.toFloat() ?: return false
-                cityName.text = findClosestCity(latitude.text.toFloat(), longitude.text.toFloat())
                 true
             } catch (_: NumberFormatException) {
                 PopupUtil.showBalloonForComponent(
@@ -93,21 +92,11 @@ private class SettingsComponent(settingsState: WeatherWidgetSettingsState) : Dis
         }
     }
 
-    inner class CityNameListener : DocumentListener {
-        override fun insertUpdate(e: DocumentEvent?) {}
-        override fun removeUpdate(e: DocumentEvent?) {}
-        override fun changedUpdate(e: DocumentEvent?) {
-            findCity()
-        }
-    }
-
-    val latitude = JBTextField(settingsState.latitude.toString()).apply {
+    val latitude = JBTextField().apply {
         inputVerifier = floatVerifier
-        document.addDocumentListener(CityNameListener())
     }
-    val longitude = JBTextField(settingsState.longitude.toString()).apply {
+    val longitude = JBTextField().apply {
         inputVerifier = floatVerifier
-        document.addDocumentListener(CityNameListener())
     }
 
     private val findCityButton = JButton("Find City").apply {
@@ -131,10 +120,6 @@ private class SettingsComponent(settingsState: WeatherWidgetSettingsState) : Dis
                 }
             }).showUnderneathOf(this)
         }
-    }
-
-    private fun findCity() {
-        cityName.text = findClosestCity(latitude.text.toFloat(), longitude.text.toFloat())
     }
 
     private val hours = JSpinner(SpinnerNumberModel(settingsState.hours, 2, 10, 1))
@@ -167,17 +152,95 @@ private class SettingsComponent(settingsState: WeatherWidgetSettingsState) : Dis
         setRenderer { _, value, _, _, _ -> JBLabel(value.value) }
     }
 
-    val cityName = JBTextField(settingsState.cityName)
+    val cityName = JBTextField()
+
+    private val locationsModel = DefaultListModel<SavedLocation>().apply {
+        settingsState.savedLocations.forEach { addElement(it.copy()) }
+    }
+    private val locationsList = JBList(locationsModel).apply {
+        visibleRowCount = 5
+        setCellRenderer { _, value, _, _, _ ->
+            JBLabel("${value.name} (${value.latitude}, ${value.longitude})")
+        }
+    }
+    private val addLocationButton = JButton("Add New").apply {
+        addActionListener {
+            val location = currentLocation() ?: return@addActionListener
+            locationsModel.addElement(location)
+            locationsList.selectedIndex = locationsModel.size() - 1
+            populateFields(location)
+        }
+    }
+    private val updateLocationButton = JButton("Update Selected").apply {
+        addActionListener {
+            val index = locationsList.selectedIndex
+            if (index < 0) return@addActionListener
+            val location = currentLocation() ?: return@addActionListener
+            locationsModel.set(index, location)
+            populateFields(location)
+        }
+    }
+    private val removeLocationButton = JButton("Remove Selected").apply {
+        addActionListener {
+            val index = locationsList.selectedIndex
+            if (index >= 0 && locationsModel.size() > 1) {
+                locationsModel.remove(index)
+            }
+        }
+    }
+    private val autoDetectButton = JButton("Auto-Detect (Timezone)").apply {
+        addActionListener {
+            val detected = guessCityByTimezone()
+            populateFields(detected)
+        }
+    }
+    private val locationsHint = JBLabel("Edit fields and click Update Selected to save changes.").apply {
+        foreground = JBUI.CurrentTheme.ContextHelp.FOREGROUND
+    }
 
     fun getHours(): Int = hours.value as Int
 
+    fun getSavedLocations(): List<SavedLocation> = (0 until locationsModel.size()).map { index ->
+        locationsModel.getElementAt(index)
+    }
+
+    fun getActiveLocationIndex(): Int = locationsList.selectedIndex.coerceAtLeast(0)
+
+    private fun currentLocation(): SavedLocation? {
+        val lat = latitude.text.toFloatOrNull() ?: return null
+        val lon = longitude.text.toFloatOrNull() ?: return null
+        val name = cityName.text.trim().ifEmpty { "Custom" }
+        return SavedLocation(name, lat, lon)
+    }
+
+    private fun populateFields(location: SavedLocation) {
+        cityName.text = location.name
+        latitude.text = location.latitude.toString()
+        longitude.text = location.longitude.toString()
+    }
+
     fun getComponent(): JComponent = FormBuilder.createFormBuilder()
-        .addLabeledComponent("Place", BorderLayoutPanel().apply {
-            addToCenter(cityName)
-            addToRight(findCityButton)
-        })
+        .addLabeledComponent("Place", cityName)
         .addLabeledComponent("Latitude", latitude)
         .addLabeledComponent("Longitude", longitude)
+        .addComponent(BorderLayoutPanel().apply {
+            addToLeft(autoDetectButton)
+            addToRight(findCityButton)
+        })
+        .addLabeledComponent(
+            "Saved locations",
+            BorderLayoutPanel().apply {
+                addToCenter(JScrollPane(locationsList))
+                addToRight(
+                    JPanel().apply {
+                        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                        add(addLocationButton)
+                        add(updateLocationButton)
+                        add(removeLocationButton)
+                    }
+                )
+            }
+        )
         .addSeparator()
         .addLabeledComponent("Show next hours", hours)
         .addLabeledComponent("Show wind", showWindDirection)
@@ -187,10 +250,25 @@ private class SettingsComponent(settingsState: WeatherWidgetSettingsState) : Dis
         .addLabeledComponent("Pressure unit", pressureUnit)
         .addSeparator()
         .addLabeledComponent("Precipitation bars color", colorPicker)
+        .addSeparator()
+        .addComponent(locationsHint)
+
         .panel.let {
             BorderLayoutPanel().apply { addToTop(it) }
         }
 
     override fun dispose() {
+    }
+
+    init {
+        val initialIndex = settingsState.selectedLocationIndex.coerceIn(0, locationsModel.size() - 1)
+        if (locationsModel.size() > 0) {
+            locationsList.selectedIndex = initialIndex
+            populateFields(locationsModel.getElementAt(initialIndex))
+        }
+        locationsList.addListSelectionListener {
+            val location = locationsList.selectedValue ?: return@addListSelectionListener
+            populateFields(location)
+        }
     }
 }

@@ -2,13 +2,17 @@ package services
 
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
+import com.intellij.openapi.Disposable
+import org.jetbrains.annotations.TestOnly
 import com.openmeteo.api.Forecast
 import com.openmeteo.api.OpenMeteo
 import com.openmeteo.api.common.Response
 import com.openmeteo.api.common.time.Time
 import com.openmeteo.api.common.time.Timezone
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,41 +23,68 @@ import settings.WeatherWidgetSettingsState
 import java.time.ZoneId
 
 @Service
-class WeatherService(val scope: CoroutineScope) {
+class WeatherService : Disposable {
+    data class TestHooks(
+        val scope: CoroutineScope,
+        val settingsProvider: () -> WeatherWidgetSettingsState,
+        val weatherClientFactory: (WeatherWidgetSettingsState) -> WeatherProvider,
+        val clock: () -> Long,
+        val startPolling: Boolean,
+        val ioDispatcher: CoroutineDispatcher
+    )
+
+    companion object {
+        @TestOnly
+        internal var testHooks: TestHooks? = null
+    }
+
+    private val hooks = testHooks
+    private val serviceJob = SupervisorJob()
+    val scope: CoroutineScope = hooks?.scope ?: CoroutineScope(serviceJob + Dispatchers.Default)
+    private val settingsProvider: () -> WeatherWidgetSettingsState =
+        hooks?.settingsProvider ?: { service<WeatherWidgetSettingsState>() }
+    private val weatherClientFactory: (WeatherWidgetSettingsState) -> WeatherProvider =
+        hooks?.weatherClientFactory ?: { WeatherClient(it) }
+    private val clock: () -> Long = hooks?.clock ?: { System.currentTimeMillis() }
+    private val startPolling: Boolean = hooks?.startPolling ?: true
+    private val ioDispatcher: CoroutineDispatcher = hooks?.ioDispatcher ?: Dispatchers.IO
     private val _weatherDataFlow: MutableStateFlow<WeatherData> =
         MutableStateFlow(NotPresent(0L))
     val weatherDataFlow = _weatherDataFlow.asStateFlow()
 
     init {
-        scope.launch {
-            while (true) {
-                val lastState = weatherDataFlow.value
-                val needUpdate = when (lastState) {
-                    is Error -> System.currentTimeMillis() - lastState.time > 30_000
-                    is NotPresent -> System.currentTimeMillis() - lastState.time > 5_000
-                    is Present -> System.currentTimeMillis() - lastState.time > 5 * 60_000
+        if (startPolling) {
+            scope.launch {
+                while (true) {
+                    val lastState = weatherDataFlow.value
+                    val now = clock()
+                    val needUpdate = when (lastState) {
+                        is Error -> now - lastState.time > 30_000
+                        is NotPresent -> now - lastState.time > 5_000
+                        is Present -> now - lastState.time > 5 * 60_000
+                    }
+                    if (needUpdate) {
+                        val data = withContext(ioDispatcher) { loadWeather() }
+                        _weatherDataFlow.emit(data)
+                    }
+                    delay(20_000)
                 }
-                if (needUpdate) {
-                    val data = withContext(Dispatchers.IO) { loadWeather() }
-                    _weatherDataFlow.emit(data)
-                }
-                delay(20_000)
             }
         }
     }
 
     fun forceWeatherCheck() {
         scope.launch {
-            val data = withContext(Dispatchers.IO) { loadWeather() }
+            val data = withContext(ioDispatcher) { loadWeather() }
             _weatherDataFlow.emit(data)
         }
     }
 
     private fun loadWeather(): WeatherData {
-        val time = System.currentTimeMillis()
-        val settings = service<WeatherWidgetSettingsState>()
+        val time = clock()
+        val settings = settingsProvider()
         return try {
-            val data = WeatherClient(settings).getRainData()
+            val data = weatherClientFactory(settings).getRainData()
             Present(data, time)
         } catch (e: Throwable) {
             val error = buildString {
@@ -64,6 +95,10 @@ class WeatherService(val scope: CoroutineScope) {
             }
             Error(error, time)
         }
+    }
+
+    override fun dispose() {
+        serviceJob.cancel()
     }
 }
 
@@ -84,11 +119,17 @@ data class HourData(
     val surfacePressure: Double,
 )
 
-class WeatherClient(private val settings: WeatherWidgetSettingsState) {
-    private val client = OpenMeteo(settings.latitude, settings.longitude)
+interface WeatherProvider {
+    fun getRainData(): List<Pair<Time, HourData>>
+}
+
+class WeatherClient(private val settings: WeatherWidgetSettingsState) : WeatherProvider {
+    private val client = settings.currentLocation().run {
+        OpenMeteo(latitude, longitude)
+    }
 
     @OptIn(Response.ExperimentalGluedUnitTimeStepValues::class)
-    fun getRainData(): List<Pair<Time, HourData>> {
+    override fun getRainData(): List<Pair<Time, HourData>> {
         val forecast = client.forecast {
             hourly = Forecast.Hourly {
                 listOf(precipitation, temperature2m, windspeed10m, winddirection10m, weathercode, surfacePressure)

@@ -7,6 +7,9 @@ import com.intellij.openapi.components.service
 import com.intellij.util.xmlb.Converter
 import com.intellij.util.xmlb.XmlSerializerUtil
 import com.intellij.util.xmlb.annotations.OptionTag
+import com.intellij.util.xmlb.annotations.Tag
+import com.intellij.util.xmlb.annotations.XCollection
+import com.intellij.util.xmlb.annotations.Attribute
 import com.openmeteo.api.common.units.TemperatureUnit
 import com.openmeteo.api.common.units.WindSpeedUnit
 import java.awt.Color
@@ -17,12 +20,12 @@ import java.awt.Color
     storages = [Storage("WeatherWidget.xml")]
 )
 class WeatherWidgetSettingsState : PersistentStateComponent<WeatherWidgetSettingsState> {
-    var latitude: Float = 51.49141f
-    var longitude: Float = -0.035749f
     var hours: Int = 5
     var showWind: Boolean = true
     var showTemperature: Boolean = true
     var cityName: String = "London"
+    var latitude: Float = 51.49141f
+    var longitude: Float = -0.035749f
 
     @OptionTag(converter = TemperatureUnitConverter::class)
     var temperatureUnit: TemperatureUnit = TemperatureUnit.Celsius
@@ -36,6 +39,12 @@ class WeatherWidgetSettingsState : PersistentStateComponent<WeatherWidgetSetting
     @OptionTag(converter = PressureUnitConverter::class)
     var pressureUnit: PressureUnit = PressureUnit.MMHG
 
+    @XCollection(style = XCollection.Style.v2)
+    var savedLocations: MutableList<SavedLocation> = mutableListOf(
+        SavedLocation("London", 51.49141f, -0.035749f)
+    )
+    var selectedLocationIndex: Int = 0
+
     companion object {
         fun getInstance() = service<WeatherWidgetSettingsState>()
     }
@@ -46,8 +55,25 @@ class WeatherWidgetSettingsState : PersistentStateComponent<WeatherWidgetSetting
 
     override fun loadState(state: WeatherWidgetSettingsState) {
         XmlSerializerUtil.copyBean(state, this)
+        if (savedLocations.isEmpty()) {
+            savedLocations.add(SavedLocation(cityName, latitude, longitude))
+        }
+        if (selectedLocationIndex !in savedLocations.indices) {
+            selectedLocationIndex = 0
+        }
     }
+
+    fun currentLocation(): SavedLocation = savedLocations.getOrNull(selectedLocationIndex)
+        ?: savedLocations.firstOrNull()
+        ?: SavedLocation("London", 51.49141f, -0.035749f)
 }
+
+@Tag("location")
+data class SavedLocation(
+    @Attribute var name: String = "",
+    @Attribute var latitude: Float = 0f,
+    @Attribute var longitude: Float = 0f
+)
 
 internal class ColorConverter : Converter<Color>() {
     override fun fromString(value: String): Color {

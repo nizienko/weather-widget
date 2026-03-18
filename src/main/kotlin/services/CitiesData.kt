@@ -4,6 +4,10 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
+import java.time.Instant
+import java.time.ZoneId
+import kotlin.math.abs
+import settings.SavedLocation
 
 data class CapitalCity(val name: String, val latitude: Float, val longitude: Float)
 
@@ -31,3 +35,27 @@ fun findClosestCity(latitude: Float, longitude: Float): String {
     }
     return closestCity.name
 }
+
+fun guessCityByTimezone(zoneId: ZoneId = ZoneId.systemDefault(), instant: Instant = Instant.now()): SavedLocation {
+    val zoneMatch = findCityByZoneId(zoneId)
+    if (zoneMatch != null) return zoneMatch.toSavedLocation()
+    val offsetHours = zoneId.rules.getOffset(instant).totalSeconds / 3600.0
+    return cities.minWith(compareBy<CapitalCity> {
+        abs(approximateOffsetHours(it.longitude) - offsetHours)
+    }.thenBy {
+        abs(it.longitude - offsetHours * 15.0)
+    }).toSavedLocation()
+}
+
+private fun approximateOffsetHours(longitude: Float): Double = longitude / 15.0
+
+private fun findCityByZoneId(zoneId: ZoneId): CapitalCity? {
+    val zoneName = zoneId.id.substringAfterLast('/')
+        .replace('_', ' ')
+        .trim()
+    if (zoneName.isEmpty()) return null
+    return cities.firstOrNull { it.name.equals(zoneName, ignoreCase = true) }
+}
+
+private fun CapitalCity.toSavedLocation(): SavedLocation =
+    SavedLocation(name, latitude, longitude)
